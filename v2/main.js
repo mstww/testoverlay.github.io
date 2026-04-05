@@ -1,14 +1,72 @@
-var url_string = window.location.href;
-var url = new URL(url_string);
-var sParams = url.searchParams;
-var regiao = url.searchParams.get("regiao");
-var idusuario = url.searchParams.get("idusuario");
-var nmusuario = url.searchParams.get("nmusuario");
-var cor = url.searchParams.get("color");
-var corfonte = url.searchParams.get("fontcolor");
-var alpha = url.searchParams.get("alpha");
-var bgurl = url.searchParams.get("bu");
-var icourl = url.searchParams.get("iu");
+var regiao = null;
+var idusuario = null;
+var nmusuario = null;
+
+function getFlexibleSearchParams() {
+  var u = new URL(window.location.href);
+  if (u.search && String(u.search).length > 1) {
+    return u.searchParams;
+  }
+  var h = u.hash || "";
+  var qi = h.indexOf("?");
+  if (qi !== -1) {
+    return new URLSearchParams(h.slice(qi + 1));
+  }
+  return u.searchParams;
+}
+
+function normalizeHenrikTier(raw) {
+  if (raw == null || raw === "") return null;
+  if (typeof raw === "number" && !isNaN(raw)) return raw;
+  if (typeof raw === "string") {
+    var n = parseInt(raw, 10);
+    return isNaN(n) ? null : n;
+  }
+  if (typeof raw === "object") {
+    var keys = ["tier", "current_tier", "currentTier", "id", "value"];
+    for (var ki = 0; ki < keys.length; ki++) {
+      var v = raw[keys[ki]];
+      if (typeof v === "number" && !isNaN(v)) return v;
+      if (typeof v === "string") {
+        var n2 = parseInt(v, 10);
+        if (!isNaN(n2)) return n2;
+      }
+    }
+  }
+  return null;
+}
+
+function rankImageStem(tier) {
+  if (tier === "Unranked") return "Unranked";
+  if (typeof tier === "number" && !isNaN(tier)) return String(tier);
+  var n = normalizeHenrikTier(tier);
+  if (n != null && !isNaN(n)) return String(n);
+  return "Load";
+}
+
+function syncOverlayParamsFromUrl() {
+  var p = getFlexibleSearchParams();
+  function pick(keys) {
+    for (var i = 0; i < keys.length; i++) {
+      var v = p.get(keys[i]);
+      if (v != null && String(v).trim() !== "") {
+        return String(v).trim();
+      }
+    }
+    return null;
+  }
+  regiao = pick(["regiao", "region"]);
+  idusuario = pick(["idusuario", "id", "tag"]);
+  nmusuario = pick(["nmusuario", "name", "nickname", "nick"]);
+}
+
+syncOverlayParamsFromUrl();
+
+var _overlayQ = getFlexibleSearchParams();
+var cor = _overlayQ.get("color");
+var corfonte = _overlayQ.get("fontcolor");
+var bgurl = _overlayQ.get("bu");
+var icourl = _overlayQ.get("iu");
 var retornostatus = {};
 var dadosimportantesElo = {};
 var dadosimportantesmmr = {};
@@ -36,12 +94,15 @@ let time = {};
 let win = 0;
 let lose = 0;
 let empatou = {};
-let semwc = url.searchParams.has("swl")
+let semwc = _overlayQ.has("swl");
+var valorantCurrentAct = null;
 let apikey = ''
 var matchIds = []
 
-if (url.searchParams.has("apikey")){
-  apikey = url.searchParams.get("apikey")
+if (_overlayQ.has("apikey")) {
+  apikey = _overlayQ.get("apikey") || "";
+} else if (_overlayQ.has("api_key")) {
+  apikey = _overlayQ.get("api_key") || "";
 } else {
   document.getElementById("imgRank").style.visibility = "hidden"
   document.getElementById("textonmrank").style.visibility = "hidden"
@@ -50,67 +111,126 @@ if (url.searchParams.has("apikey")){
 }
 
 function fazGet(url) {
+  var u = url == null ? "" : String(url).trim();
+  if (!u || u.indexOf("http") !== 0) {
+    return "";
+  }
+  if (
+    u.indexOf("api.henrikdev.xyz") !== -1 &&
+    /\/(mmr|v3\/matches|v1\/account)\/null(\/|\?|$)/.test(u)
+  ) {
+    return "";
+  }
   let request = new XMLHttpRequest();
-  request.open("GET", url+"?api_key="+apikey, false);
+  request.open("GET", u + "?api_key=" + apikey, false);
   request.send();
   return request.responseText;
 }
 
 function fazGetQuery(url) {
+  var u = url == null ? "" : String(url).trim();
+  if (!u || u.indexOf("http") !== 0) {
+    return "";
+  }
+  if (
+    u.indexOf("api.henrikdev.xyz") !== -1 &&
+    /\/(mmr|v3\/matches|v1\/account)\/null(\/|\?|$)/.test(u)
+  ) {
+    return "";
+  }
   let request = new XMLHttpRequest();
-  request.open("GET", url+"&api_key="+apikey, false);
+  request.open("GET", u + "&api_key=" + apikey, false);
   request.send();
   return request.responseText;
 }
 
+function henrikPathSeg(v) {
+  return encodeURIComponent(v == null ? "" : String(v));
+}
+
+function seasonErrorMeansNoData(err) {
+  if (err === true) return true;
+  if (typeof err === "string" && err.toLowerCase().indexOf("no data") !== -1)
+    return true;
+  return false;
+}
+
 function leaderboard() {
-  const reglow = regiao.toLowerCase();
+  syncOverlayParamsFromUrl();
+  if (regiao == null || nmusuario == null || idusuario == null) return;
+  const reglow = String(regiao).toLowerCase();
   let lb = fazGetQuery(
     "https://api.henrikdev.xyz/valorant/v1/leaderboard/" +
       reglow +
       "?name=" +
-      nmusuario +
+      henrikPathSeg(nmusuario) +
       "&tag=" +
-      idusuario
+      henrikPathSeg(idusuario)
   );
-  var jsonDataLB = JSON.parse(lb);
-      if (jsonDataLB.status === 404){
-        dadosleaderboard = ' '
-      }else   dadosleaderboard = jsonDataLB.data[0].leaderboardRank;
+  try {
+    if (!lb || String(lb).trim() === "") return;
+    var jsonDataLB = JSON.parse(lb);
+    if (jsonDataLB.status === 404) {
+      dadosleaderboard = " ";
+    } else if (
+      jsonDataLB &&
+      String(jsonDataLB.status) === "200" &&
+      jsonDataLB.data &&
+      jsonDataLB.data[0]
+    ) {
+      dadosleaderboard = jsonDataLB.data[0].leaderboardRank;
+    }
+  } catch (e) {}
 }
 
 function main() {
+  syncOverlayParamsFromUrl();
+  if (regiao == null || nmusuario == null || idusuario == null) {
+    retornostatus = "0";
+    return;
+  }
+  var regLow = String(regiao).toLowerCase();
   let dados = fazGet(
     "https://api.henrikdev.xyz/valorant/v2/mmr/" +
-      regiao +
+      regLow +
       "/" +
-      nmusuario +
+      henrikPathSeg(nmusuario) +
       "/" +
-      idusuario
+      henrikPathSeg(idusuario)
   );
-  var jsonData = JSON.parse(dados);
-  let currentAct = 'e11a1';
+  var jsonData;
   try {
-  isunrankedatoatual = jsonData.data.by_season[currentAct].number_of_games;
-  nodataseasonatual = jsonData.data.by_season[currentAct].error;
+    if (!dados || String(dados).trim() === "") return;
+    jsonData = JSON.parse(dados);
   } catch (e) {
-    currentAct = 'e11aI';
-    try {
-      isunrankedatoatual = jsonData.data.by_season[currentAct].number_of_games;
-      nodataseasonatual = jsonData.data.by_season[currentAct].error;
-    } catch (e2) {
-      // Trate o erro caso nenhuma das duas opções funcione
-      console.error('Nenhum dos acts encontrados:', e2);
-      isunrankedatoatual = null;
-      nodataseasonatual = true;
-    }
+    return;
   }
+  if (
+    !jsonData ||
+    String(jsonData.status) !== "200" ||
+    !jsonData.data ||
+    !jsonData.data.current_data
+  ) {
+    retornostatus =
+      jsonData && jsonData.status != null ? jsonData.status : "0";
+    return;
+  }
+  var seasonBlock =
+    typeof readHenrikSeasonBlock === "function"
+      ? readHenrikSeasonBlock(jsonData.data.by_season, valorantCurrentAct)
+      : {
+          number_of_games: 0,
+          error: "No data Available",
+        };
+  isunrankedatoatual = seasonBlock.number_of_games;
+  nodataseasonatual = seasonBlock.error;
   retornostatus = jsonData.status;
-  checkifnull = jsonData.data.current_data.currenttier;
+  var normTier = normalizeHenrikTier(jsonData.data.current_data.currenttier);
+  checkifnull = normTier;
   dadosimportantesElo = jsonData.data.current_data.currenttierpatched;
   dadosimportantesmmr = jsonData.data.current_data.ranking_in_tier;
   dadosimportantesmmrtxt = jsonData.data.current_data.ranking_in_tier;
-  dadosimportantesTier = jsonData.data.current_data.currenttier;
+  dadosimportantesTier = normTier;
   retornostatus = jsonData.status;
   dadosimportantesultimojogo =
     jsonData.data.current_data.mmr_change_to_last_game;
@@ -120,20 +240,32 @@ function main() {
 }
 
 function foda() {
-  if (isunrankedatoatual < "5" || nodataseasonatual == "No data available" && jogosnecessarios == "5") {
+  var actGames = Number(isunrankedatoatual);
+  if (isNaN(actGames)) actGames = 0;
+  var needRatingFive =
+    jogosnecessarios == "5" || jogosnecessarios === 5;
+  var noCompTier =
+    checkifnull == null || checkifnull === 0;
+  var mayBePlacement = noCompTier || needRatingFive;
+  if (
+    mayBePlacement &&
+    (actGames < 5 ||
+      (seasonErrorMeansNoData(nodataseasonatual) && needRatingFive))
+  ) {
     dadosimportantesElo = "Unranked";
     dadosimportantesmmr = "100";
     dadosimportantesultimojogo = "nRanked";
     dadosimportantesTier = "Unranked"
     dadosimportantesmmrtxt
-    if (nodataseasonatual = "No data Available") {
+    if (seasonErrorMeansNoData(nodataseasonatual)) {
       isunrankedatoatual = 0;
     } 
   }
   if (dadosimportantesmmr > "100") {
     dadosimportantesmmr = "0";
   }
-  document.getElementById("imgRank").src = "./Resources/" + dadosimportantesTier + ".png"
+  document.getElementById("imgRank").src =
+    "./Resources/" + rankImageStem(dadosimportantesTier) + ".png";
   var atualporc = dadosimportantesmmr + "%";
   document.getElementById("headerburrao").innerHTML = dadosimportantesElo + '&nbsp &nbsp;' +dadosimportantesmmrtxt + "RR";
   if (dadosimportantesultimojogo === "nRanked"){
@@ -180,28 +312,32 @@ function foda() {
   document.getElementById("WLvalue").style.color = "#" + corfonte;
 }
 
-if (sParams.get("alpha") === "ss") {
+if (_overlayQ.get("alpha") === "ss") {
   corbg.style.backgroundColor = "transparent";
-} else if (sParams.get("alpha") === "nn") {
+} else if (_overlayQ.get("alpha") === "nn") {
   corbg.style.backgroundColor = "#" + cor;
 }
-corbg.style.backgroundImage = "url(" + bgurl + ")";
-if (icourl.length == 0) {
+if (bgurl != null && String(bgurl).length > 0) {
+  corbg.style.backgroundImage = "url(" + bgurl + ")";
+}
+if (icourl == null || icourl.length == 0) {
   document.getElementById("imgcantinho").style.display = "none";
 } else {
   document.getElementById("imgcantinho").style.content = "url(" + icourl + ")";
 }
 
-function thinking(){
-  if (document.getElementById("imgRank").src === window.location.origin + "/v2/Resources/Load.png"){
-    location.reload()
-  } 
+function thinking() {
+  try {
+    var src = document.getElementById("imgRank").src;
+    var pathname = new URL(src).pathname.replace(/\\/g, "/");
+    var lower = pathname.toLowerCase();
+    if (lower.endsWith("/resources/load.png")) {
+      location.reload();
+    }
+  } catch (e) {}
 }
-setTimeout(thinking,10000);
-main();
-foda();
+setTimeout(thinking, 10000);
 
-rankatuallog = dadosimportantesTier;
 function checadados(){
   if (retornostatus == "200" && checkifnull != null){
     foda()
@@ -211,23 +347,39 @@ function checadados(){
 setInterval(main, 15000);
 setInterval(checadados, 15000);
 
+setTimeout(function () {
+  try {
+    if (typeof ensureValorantCurrentActSync === "function") {
+      valorantCurrentAct = ensureValorantCurrentActSync();
+    }
+  } catch (e) {}
+  main();
+  foda();
+  rankatuallog = dadosimportantesTier;
+}, 0);
+
 if (semwc === false){
   function setapuuid(){
+    syncOverlayParamsFromUrl();
+    if (nmusuario == null || idusuario == null) return;
     reqpuuid = fazGet("https://api.henrikdev.xyz/valorant/v1/account/"+
-      nmusuario +
+      henrikPathSeg(nmusuario) +
       "/" +
-      idusuario);
+      henrikPathSeg(idusuario));
       let parsepuuid = JSON.parse(reqpuuid)
       puuid = parsepuuid.data.puuid;
     }
     
     function get(){
+        syncOverlayParamsFromUrl();
+        if (regiao == null || nmusuario == null || idusuario == null) return;
+        var r = String(regiao).toLowerCase();
         dadoswl = fazGetQuery("https://api.henrikdev.xyz/valorant/v3/matches/"
-          + regiao +
+          + r +
           "/" +
-          nmusuario +
+          henrikPathSeg(nmusuario) +
           "/" +
-          idusuario + 
+          henrikPathSeg(idusuario) + 
          "?mode=competitive&size=1");
         jsonDataWL = JSON.parse(dadoswl);
     }
@@ -291,6 +443,6 @@ if (semwc === false){
 }
 else if (semwc === true){
   document.getElementById("headerburrao").style.top = "-5px";
-  document.getElementById("WLvalue").style.display = none;
+  document.getElementById("WLvalue").style.display = "none";
 
 }

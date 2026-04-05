@@ -1,0 +1,9 @@
+{
+  "cleanUrls": false,
+  "directoryListing": false,
+  "rewrites": [
+    { "source": "/", "destination": "/index.html" },
+    { "source": "/v2/main", "destination": "/v2/main.html" },
+    { "source": "/v3/main", "destination": "/v3/main.html" }
+  ]
+}

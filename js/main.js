@@ -1,7 +1,10 @@
 const copyText = document.getElementById("linkUrl"),
 revealEffect = document.querySelectorAll('.reveal'),
-frame = document.querySelector("iframe"),
 copyLink = document.querySelector("#copyLink");
+
+function getPreviewFrame() {
+    return document.getElementById("previewFrame");
+}
 
 (() => {
     setTimeout(() => {
@@ -51,9 +54,9 @@ copyText.addEventListener("focus", (e) => {
     e.target.setSelectionRange(0, 99999);
 });
 
-const fields = document.querySelectorAll("input[name], select[name"),
+const fields = document.querySelectorAll("input[name], select[name]"),
     validationRule = {
-        default: (v, k) => !k || !!v?.length,
+        default: (v, k) => !!k && !!String(v ?? "").trim().length,
         color: (v, k) => {
             localStorage.setItem(k, v);
             return [true, v.replace("#", "")];
@@ -80,6 +83,8 @@ fields.forEach((e) => {
 );
 
 function changes() {
+    const frame = getPreviewFrame();
+    if (!frame) return;
     if (!isValid()) {
         copyText.value = "";
         copyLink.classList.add("hidden");
@@ -98,19 +103,27 @@ function changes() {
 
         if (isValid(requestParams)) {
             console.log("requestParams", requestParams);
+            const regSel = document.getElementById("regiao");
+            if (regSel && regSel.value && !requestParams.regiao) {
+                requestParams.regiao = regSel.value;
+            }
             let params = "";
             for (let x in requestParams) {
+                if (!x) continue;
                 params += `${x}=${requestParams[x]}&`;
             }
             params = params.slice(0, -1);
             console.log("params", params);
             copyLink.classList.remove("hidden");
 
-            frame.classList.remove("hidden");
-            frame.src = copyText.value =
-                window.location.origin +
-                //"https://davizeragod.github.io" + 
-                "/v2/main.html?" + params;
+            const frameEl = getPreviewFrame();
+            if (!frameEl) return;
+            frameEl.classList.remove("hidden");
+            const previewHref = new URL(
+                "v2/main.html?" + params,
+                window.location.href
+            ).href;
+            frameEl.src = copyText.value = previewHref;
             console.log("update");
             return;
         }
